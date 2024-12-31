@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::ops::Deref;
 
 use serde::Serialize;
 
@@ -6,7 +7,7 @@ use crate::dictionary::WordId;
 use lindera_dictionary::dictionary::{Dictionary, UserDictionary, UNK};
 
 #[derive(Serialize, Clone)]
-pub struct Token<'a> {
+pub struct Token<'a, T: Deref<Target = [u8]>> {
     /// The text content of the token, which is a copy-on-write string slice.
     /// This allows for efficient handling of both owned and borrowed string data.
     pub text: Cow<'a, str>,
@@ -36,7 +37,7 @@ pub struct Token<'a> {
     /// including word entries and their associated metadata. This reference
     /// allows the tokenizer to access and utilize the dictionary during
     /// the tokenization of input text.
-    pub dictionary: &'a Dictionary,
+    pub dictionary: &'a Dictionary<T>,
 
     /// An optional reference to a user-defined dictionary.
     ///
@@ -54,7 +55,7 @@ pub struct Token<'a> {
     pub details: Option<Vec<Cow<'a, str>>>,
 }
 
-impl<'a> Token<'a> {
+impl<'a, T: Deref<Target = [u8]>> Token<'a, T> {
     /// Creates a new `Token` instance with the provided parameters.
     ///
     /// # Arguments
@@ -84,7 +85,7 @@ impl<'a> Token<'a> {
         end: usize,
         position: usize,
         word_id: WordId,
-        dictionary: &'a Dictionary,
+        dictionary: &'a Dictionary<T>,
         user_dictionary: Option<&'a UserDictionary>,
     ) -> Self {
         Self {

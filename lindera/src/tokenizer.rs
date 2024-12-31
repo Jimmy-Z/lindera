@@ -3,6 +3,7 @@ use std::env;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
+use std::ops::Deref;
 
 use serde_json::{json, Value};
 
@@ -10,9 +11,9 @@ use crate::character_filter::{correct_offset, BoxCharacterFilter, CharacterFilte
 use crate::dictionary::DictionaryKind;
 use crate::error::LinderaErrorKind;
 use crate::mode::Mode;
-use crate::segmenter::Segmenter;
+use crate::segmenter::{self, Segmenter};
 use crate::token::Token;
-use crate::token_filter::{BoxTokenFilter, TokenFilterLoader};
+use crate::token_filter::{BoxedTokenFilter, TokenFilterLoader};
 use crate::LinderaResult;
 
 pub type TokenizerConfig = Value;
@@ -133,7 +134,7 @@ impl TokenizerBuilder {
         self
     }
 
-    pub fn build(&self) -> LinderaResult<Tokenizer> {
+    pub fn build(&self) -> LinderaResult<TokenizerE> {
         Tokenizer::from_config(&self.config).map_err(|err| {
             LinderaErrorKind::Parse
                 .with_error(anyhow::anyhow!("failed to build tokenizer: {}", err))
@@ -141,12 +142,12 @@ impl TokenizerBuilder {
     }
 }
 
-pub struct Tokenizer {
+pub struct Tokenizer<T: Deref<Target = [u8]> + Clone> {
     /// Segmenter
     /// The `segmenter` field is an instance of the `Segmenter` struct, which is responsible for
     /// segmenting text into tokens. This is a core component of the tokenizer, enabling it to
     /// break down input text into manageable and meaningful units for further processing.
-    pub segmenter: Segmenter,
+    pub segmenter: Segmenter<T>,
 
     /// Character filters
     /// A vector of boxed character filters that will be applied to the input text
@@ -159,10 +160,10 @@ pub struct Tokenizer {
     /// A vector of boxed token filters that will be applied to the tokens during tokenization.
     /// Each token filter is a boxed trait object implementing the `TokenFilter` trait, allowing
     /// for various transformations and processing steps to be applied to the tokens.
-    pub token_filters: Vec<BoxTokenFilter>,
+    pub token_filters: Vec<BoxedTokenFilter<T>>,
 }
 
-impl Tokenizer {
+impl<T: Deref<Target = [u8]> + Clone> Tokenizer<T> {
     /// Creates a new `Tokenizer` instance from a provided `Segmenter`.
     ///
     /// # Arguments
@@ -178,7 +179,7 @@ impl Tokenizer {
     /// - `segmenter`: The segmenter is responsible for handling the actual segmentation and tokenization of text. It is passed into the `Tokenizer` during initialization.
     /// - `character_filters`: This is initialized as an empty vector and can be modified later to include character filters.
     /// - `token_filters`: This is also initialized as an empty vector and can be modified later to include token filters.
-    pub fn new(segmenter: Segmenter) -> Self {
+    pub fn new(segmenter: Segmenter<T>) -> Self {
         Self {
             segmenter,
             character_filters: Vec::new(),
@@ -190,7 +191,7 @@ impl Tokenizer {
         let segmenter_config = config.get("segmenter").ok_or_else(|| {
             LinderaErrorKind::Deserialize.with_error(anyhow::anyhow!("missing segmenter config."))
         })?;
-        let segmenter = Segmenter::from_config(segmenter_config)?;
+        let segmenter = segmenter::from_config(segmenter_config)?;
 
         // Create a tokenizer from the segmenter.
         let mut tokenizer = Tokenizer::new(segmenter);
@@ -348,7 +349,7 @@ impl Tokenizer {
     }
 }
 
-impl Clone for Tokenizer {
+impl<T: Deref<Target = [u8]> + Clone> Clone for Tokenizer<T> {
     /// Creates a deep clone of the `Tokenizer` instance, including all character filters, token filters, and the segmenter.
     ///
     /// # Returns
@@ -371,9 +372,9 @@ impl Clone for Tokenizer {
             character_filters.push(character_filter.box_clone());
         }
 
-        let mut token_filters: Vec<BoxTokenFilter> = Vec::new();
+        let mut token_filters: Vec<BoxedTokenFilter<T>> = Vec::new();
         for token_filter in self.token_filters.iter() {
-            token_filters.push(token_filter.box_clone());
+            token_filters.push(token_filter.clone());
         }
 
         Tokenizer {

@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::ops::Deref;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -21,9 +22,14 @@ use lindera_dictionary::util::read_file;
 use crate::error::{LinderaError, LinderaErrorKind};
 use crate::LinderaResult;
 
-pub type Dictionary = lindera_dictionary::dictionary::Dictionary;
+pub type Dictionary<T> = lindera_dictionary::dictionary::Dictionary<T>;
 pub type UserDictionary = lindera_dictionary::dictionary::UserDictionary;
 pub type WordId = lindera_dictionary::viterbi::WordId;
+
+pub enum DictionaryE {
+    Static(Dictionary<&'static [u8]>),
+    Vec(Dictionary<Vec<u8>>),
+}
 
 #[derive(Debug, Clone, EnumIter, Deserialize, Serialize, PartialEq, Eq)]
 pub enum DictionaryKind {
@@ -98,7 +104,7 @@ pub fn resolve_builder(
     }
 }
 
-pub fn load_dictionary_from_path(path: &Path) -> LinderaResult<Dictionary> {
+pub fn load_dictionary_from_path(path: &Path) -> LinderaResult<Dictionary<Vec<u8>>> {
     Ok(Dictionary {
         prefix_dictionary: PrefixDictionaryLoader::load(path)?,
         connection_cost_matrix: ConnectionCostMatrixLoader::load(path)?,
@@ -107,7 +113,7 @@ pub fn load_dictionary_from_path(path: &Path) -> LinderaResult<Dictionary> {
     })
 }
 
-pub fn load_dictionary_from_kind(kind: DictionaryKind) -> LinderaResult<Dictionary> {
+pub fn load_dictionary_from_kind(kind: DictionaryKind) -> LinderaResult<Dictionary<&'static [u8]>> {
     // The dictionary specified by the feature flag will be loaded.
     match kind {
         #[cfg(feature = "ipadic")]
@@ -136,7 +142,7 @@ pub fn load_dictionary_from_kind(kind: DictionaryKind) -> LinderaResult<Dictiona
 
 pub fn load_dictionary_from_config(
     dictionary_config: &DictionaryConfig,
-) -> LinderaResult<Dictionary> {
+) -> LinderaResult<DictionaryE> {
     match dictionary_config.get("kind") {
         Some(kind_value) => {
             let kind = DictionaryKind::from_str(kind_value.as_str().ok_or_else(|| {
@@ -144,7 +150,7 @@ pub fn load_dictionary_from_config(
             })?)?;
 
             // Load contained dictionary from kind value in config.
-            load_dictionary_from_kind(kind)
+            load_dictionary_from_kind(kind).map(DictionaryE::Static)
         }
         None => {
             match dictionary_config.get("path") {
@@ -155,7 +161,7 @@ pub fn load_dictionary_from_config(
                     })?);
 
                     // load external dictionary from path
-                    load_dictionary_from_path(path.as_path())
+                    load_dictionary_from_path(path.as_path()).map(DictionaryE::Vec)
                 }
                 None => Err(LinderaErrorKind::Args.with_error(anyhow::anyhow!(
                     "kind field or path field must be specified"

@@ -12,29 +12,29 @@ where
     T: Deref<Target = [u8]>;
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct PrefixDictionary<Data = Vec<u8>> {
+pub struct PrefixDictionary<T: Deref<Target = [u8]>> {
     #[serde(with = "DoubleArrayDef")]
-    pub da: DoubleArray<Vec<u8>>,
-    pub vals_data: Data,
-    pub words_idx_data: Vec<u8>,
-    pub words_data: Vec<u8>,
+    pub da: DoubleArray<T>,
+    pub vals_data: T,
+    pub words_idx_data: T,
+    pub words_data: T,
     pub is_system: bool,
 }
 
-impl PrefixDictionary<&[u8]> {
+impl<T: Deref<Target = [u8]>> PrefixDictionary<T> {
     pub fn load(
-        da_data: &[u8],
-        vals_data: &[u8],
-        words_idx_data: &[u8],
-        words_data: &[u8],
-    ) -> PrefixDictionary {
-        let da = DoubleArray::new(da_data.to_vec());
+        da_data: T,
+        vals_data: T,
+        words_idx_data: T,
+        words_data: T,
+    ) -> PrefixDictionary<T> {
+        let da = DoubleArray::new(da_data);
 
         PrefixDictionary {
             da,
-            vals_data: vals_data.to_vec(),
-            words_idx_data: words_idx_data.to_vec(),
-            words_data: words_data.to_vec(),
+            vals_data,
+            words_idx_data,
+            words_data,
             is_system: true,
         }
     }

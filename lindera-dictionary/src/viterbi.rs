@@ -1,4 +1,5 @@
 use std::io;
+use std::ops::Deref;
 
 use byteorder::{ByteOrder, LittleEndian, WriteBytesExt};
 use serde::{Deserialize, Serialize};
@@ -151,10 +152,10 @@ impl Lattice {
     }
 
     #[inline(never)]
-    pub fn set_text(
+    pub fn set_text<T: Deref<Target = [u8]>, U: Deref<Target = [u8]>> (
         &mut self,
-        dict: &PrefixDictionary,
-        user_dict: &Option<&PrefixDictionary>,
+        dict: &PrefixDictionary<T>,
+        user_dict: &Option<&PrefixDictionary<U>>,
         char_definitions: &CharacterDefinition,
         unknown_dictionary: &UnknownDictionary,
         text: &str,

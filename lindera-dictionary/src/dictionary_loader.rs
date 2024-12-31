@@ -9,6 +9,6 @@ use crate::dictionary::{Dictionary, UserDictionary};
 use crate::LinderaResult;
 
 pub trait DictionaryLoader {
-    fn load_dictionary(&self, input_dir: &Path) -> LinderaResult<Dictionary>;
+    fn load_dictionary(&self, input_dir: &Path) -> LinderaResult<Dictionary<Vec<u8>>>;
     fn load_user_dictionary(&self, input_file: &Path) -> LinderaResult<UserDictionary>;
 }

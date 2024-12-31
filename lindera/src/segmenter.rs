@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::ops::Deref;
 
 use lindera_dictionary::mode::Mode;
 
@@ -6,7 +7,7 @@ use lindera_dictionary::dictionary::{Dictionary, UserDictionary};
 use lindera_dictionary::viterbi::Lattice;
 use serde_json::Value;
 
-use crate::dictionary::{load_dictionary_from_config, load_user_dictionary_from_config};
+use crate::dictionary::{load_dictionary_from_config, load_user_dictionary_from_config, DictionaryE};
 use crate::error::LinderaErrorKind;
 use crate::token::Token;
 use crate::LinderaResult;
@@ -14,15 +15,30 @@ use crate::LinderaResult;
 pub type SegmenterConfig = Value;
 
 /// Segmenter
+/// A struct representing a segmenter for tokenizing text.
+///
+/// The `Segmenter` struct provides methods for creating a segmenter from a configuration,
+/// creating a new segmenter, and segmenting text into tokens.
+///
+/// # Methods
+///
+/// - `from_config`: Creates a `Segmenter` from a given configuration.
+/// - `new`: Creates a new `Segmenter` with the specified mode, dictionary, and optional user dictionary.
+/// - `segment`: Segments the given text into tokens.
+///
+/// # Errors
+///
+/// Methods that return `LinderaResult` may produce errors related to dictionary loading,
+/// user dictionary loading, or tokenization process.
 #[derive(Clone)]
-pub struct Segmenter {
+pub struct Segmenter<T: Deref<Target = [u8]> + Clone> {
     /// The segmentation mode to be used by the segmenter.
     /// This determines how the text will be split into segments.
     pub mode: Mode,
 
     /// The dictionary used for segmenting text. This dictionary contains the necessary
     /// data structures and algorithms to perform morphological analysis and tokenization.
-    pub dictionary: Dictionary,
+    pub dictionary: Dictionary<T>,
 
     /// An optional user-defined dictionary that can be used to customize the segmentation process.
     /// If provided, this dictionary will be used in addition to the default dictionary to improve
@@ -30,7 +46,7 @@ pub struct Segmenter {
     pub user_dictionary: Option<UserDictionary>,
 }
 
-impl Segmenter {
+impl<T: Deref<Target = [u8]> + Clone> Segmenter<T> {
     /// Creates a new instance with the specified mode, dictionary, and optional user dictionary.
     ///
     /// # Arguments
@@ -50,7 +66,7 @@ impl Segmenter {
     /// - `user_dictionary`: This is optional. If provided, it allows the user to extend or override the rules of the main dictionary with custom tokens.
     pub fn new(
         mode: Mode,
-        dictionary: Dictionary,
+        dictionary: Dictionary<T>,
         user_dictionary: Option<UserDictionary>,
     ) -> Self {
         Self {
@@ -58,48 +74,6 @@ impl Segmenter {
             dictionary,
             user_dictionary,
         }
-    }
-
-    /// A struct representing a segmenter for tokenizing text.
-    ///
-    /// The `Segmenter` struct provides methods for creating a segmenter from a configuration,
-    /// creating a new segmenter, and segmenting text into tokens.
-    ///
-    /// # Methods
-    ///
-    /// - `from_config`: Creates a `Segmenter` from a given configuration.
-    /// - `new`: Creates a new `Segmenter` with the specified mode, dictionary, and optional user dictionary.
-    /// - `segment`: Segments the given text into tokens.
-    ///
-    /// # Errors
-    ///
-    /// Methods that return `LinderaResult` may produce errors related to dictionary loading,
-    /// user dictionary loading, or tokenization process.
-    pub fn from_config(config: &SegmenterConfig) -> LinderaResult<Self> {
-        // Load the dictionary from the config
-        let dictionary =
-            load_dictionary_from_config(config.get("dictionary").ok_or_else(|| {
-                LinderaErrorKind::Parse.with_error(anyhow::anyhow!("dictionary field is missing"))
-            })?)?;
-
-        // Load the user dictionary from the config
-        let user_dictionary = config
-            .get("user_dictionary")
-            .map(load_user_dictionary_from_config)
-            .transpose()?;
-
-        // Load the mode from the config
-        let mode: Mode = config.get("mode").map_or_else(
-            || Ok(Mode::Normal),
-            |v| {
-                serde_json::from_value(v.clone()).map_err(|e| {
-                    LinderaErrorKind::Parse
-                        .with_error(anyhow::anyhow!("mode field is invalid: {}", e))
-                })
-            },
-        )?;
-
-        Ok(Self::new(mode, dictionary, user_dictionary))
     }
 
     /// Segments the input text into tokens based on the dictionary and user-defined rules.
@@ -138,8 +112,8 @@ impl Segmenter {
     /// # Errors
     ///
     /// - If the lattice fails to be processed or if there is an issue with the segmentation process, the function returns an error.
-    pub fn segment<'a>(&'a self, text: Cow<'a, str>) -> LinderaResult<Vec<Token<'a>>> {
-        let mut tokens: Vec<Token> = Vec::new();
+    pub fn segment<'a>(&'a self, text: Cow<'a, str>) -> LinderaResult<Vec<Token<'a, T>>> {
+        let mut tokens: Vec<Token<T>> = Vec::new();
         let mut lattice = Lattice::default();
 
         let mut position = 0_usize;
@@ -196,6 +170,41 @@ impl Segmenter {
         }
 
         Ok(tokens)
+    }
+}
+
+pub enum SegmenterE {
+    Static(Segmenter<&'static [u8]>),
+    Vec(Segmenter<Vec<u8>>),
+}
+
+pub fn from_config(config: &SegmenterConfig) -> LinderaResult<SegmenterE> {
+    // Load the dictionary from the config
+    let dictionary =
+        load_dictionary_from_config(config.get("dictionary").ok_or_else(|| {
+            LinderaErrorKind::Parse.with_error(anyhow::anyhow!("dictionary field is missing"))
+        })?)?;
+
+    // Load the user dictionary from the config
+    let user_dictionary = config
+        .get("user_dictionary")
+        .map(load_user_dictionary_from_config)
+        .transpose()?;
+
+    // Load the mode from the config
+    let mode: Mode = config.get("mode").map_or_else(
+        || Ok(Mode::Normal),
+        |v| {
+            serde_json::from_value(v.clone()).map_err(|e| {
+                LinderaErrorKind::Parse
+                    .with_error(anyhow::anyhow!("mode field is invalid: {}", e))
+            })
+        },
+    )?;
+
+    match dictionary {
+        DictionaryE::Static(d) => Ok(SegmenterE::Static(Segmenter::new(mode, d, user_dictionary))),
+        DictionaryE::Vec(d) => Ok(SegmenterE::Vec(Segmenter::new(mode, d, user_dictionary))),
     }
 }
 

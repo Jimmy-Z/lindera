@@ -3,6 +3,7 @@ pub mod connection_cost_matrix;
 pub mod prefix_dictionary;
 pub mod unknown_dictionary;
 
+use std::ops::Deref;
 use std::str;
 
 use byteorder::{ByteOrder, LittleEndian};
@@ -19,14 +20,14 @@ use crate::LinderaResult;
 pub static UNK: Lazy<Vec<&str>> = Lazy::new(|| vec!["UNK"]);
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct Dictionary {
-    pub prefix_dictionary: PrefixDictionary<Vec<u8>>,
+pub struct Dictionary<T: Deref<Target = [u8]>> {
+    pub prefix_dictionary: PrefixDictionary<T>,
     pub connection_cost_matrix: ConnectionCostMatrix,
     pub character_definition: CharacterDefinition,
     pub unknown_dictionary: UnknownDictionary,
 }
 
-impl Dictionary {
+impl<T: Deref<Target = [u8]>> Dictionary<T> {
     pub fn word_details(&self, word_id: usize) -> Vec<&str> {
         if 4 * word_id >= self.prefix_dictionary.words_idx_data.len() {
             return vec![];

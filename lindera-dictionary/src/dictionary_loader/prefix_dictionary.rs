@@ -12,7 +12,7 @@ pub struct PrefixDictionaryLoader {}
 
 impl PrefixDictionaryLoader {
     #[allow(unused_mut)]
-    pub fn load(input_dir: &Path) -> LinderaResult<PrefixDictionary> {
+    pub fn load(input_dir: &Path) -> LinderaResult<PrefixDictionary<Vec<u8>>> {
         let mut da_data = read_file(input_dir.join("dict.da").as_path())?;
         let mut vals_data = read_file(input_dir.join("dict.vals").as_path())?;
         let mut words_idx_data = read_file(input_dir.join("dict.wordsidx").as_path())?;
@@ -48,10 +48,10 @@ impl PrefixDictionaryLoader {
         }
 
         Ok(PrefixDictionary::load(
-            da_data.as_slice(),
-            vals_data.as_slice(),
-            words_idx_data.as_slice(),
-            words_data.as_slice(),
+            da_data,
+            vals_data,
+            words_idx_data,
+            words_data,
         ))
     }
 }
