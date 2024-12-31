@@ -101,7 +101,7 @@ decompress_data!(
 #[cfg(not(feature = "unidic"))]
 decompress_data!(WORDS_DATA, &[], "dict.words");
 
-pub fn load() -> LinderaResult<Dictionary> {
+pub fn load() -> LinderaResult<Dictionary<&'static [u8]>> {
     let da_data = &DA_DATA;
     let vals_data = &VALS_DATA;
     let words_idx_data = &WORDS_IDX_DATA;

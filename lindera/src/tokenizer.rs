@@ -11,9 +11,9 @@ use crate::character_filter::{correct_offset, BoxCharacterFilter, CharacterFilte
 use crate::dictionary::DictionaryKind;
 use crate::error::LinderaErrorKind;
 use crate::mode::Mode;
-use crate::segmenter::{self, Segmenter};
+use crate::segmenter::{self, Segmenter, SegmenterE};
 use crate::token::Token;
-use crate::token_filter::{BoxedTokenFilter, TokenFilterLoader};
+use crate::token_filter::{BoxTokenFilter, TokenFilterLoader};
 use crate::LinderaResult;
 
 pub type TokenizerConfig = Value;
@@ -135,7 +135,7 @@ impl TokenizerBuilder {
     }
 
     pub fn build(&self) -> LinderaResult<TokenizerE> {
-        Tokenizer::from_config(&self.config).map_err(|err| {
+        from_config(&self.config).map_err(|err| {
             LinderaErrorKind::Parse
                 .with_error(anyhow::anyhow!("failed to build tokenizer: {}", err))
         })
@@ -160,7 +160,7 @@ pub struct Tokenizer<T: Deref<Target = [u8]> + Clone> {
     /// A vector of boxed token filters that will be applied to the tokens during tokenization.
     /// Each token filter is a boxed trait object implementing the `TokenFilter` trait, allowing
     /// for various transformations and processing steps to be applied to the tokens.
-    pub token_filters: Vec<BoxedTokenFilter<T>>,
+    pub token_filters: Vec<BoxTokenFilter<T>>,
 }
 
 impl<T: Deref<Target = [u8]> + Clone> Tokenizer<T> {
@@ -187,22 +187,15 @@ impl<T: Deref<Target = [u8]> + Clone> Tokenizer<T> {
         }
     }
 
-    pub fn from_config(config: &TokenizerConfig) -> LinderaResult<Self> {
-        let segmenter_config = config.get("segmenter").ok_or_else(|| {
-            LinderaErrorKind::Deserialize.with_error(anyhow::anyhow!("missing segmenter config."))
-        })?;
-        let segmenter = segmenter::from_config(segmenter_config)?;
 
-        // Create a tokenizer from the segmenter.
-        let mut tokenizer = Tokenizer::new(segmenter);
-
+    fn attach_filters(&mut self, config: &TokenizerConfig) -> LinderaResult<()> {
         // Load character filter settings from the tokenizer config if it is not empty.
         if let Some(character_filter_settings) = config["character_filters"].as_array() {
             for character_filter_setting in character_filter_settings {
                 let character_filter_name = character_filter_setting["kind"].as_str();
                 if let Some(character_filter_name) = character_filter_name {
                     // Append a character filter to the tokenizer.
-                    tokenizer.append_character_filter(CharacterFilterLoader::load_from_value(
+                    self.append_character_filter(CharacterFilterLoader::load_from_value(
                         character_filter_name,
                         &character_filter_setting["args"],
                     )?);
@@ -216,7 +209,7 @@ impl<T: Deref<Target = [u8]> + Clone> Tokenizer<T> {
                 let token_filter_name = token_filter_setting["kind"].as_str();
                 if let Some(token_filter_name) = token_filter_name {
                     // Append a token filter to the tokenizer.
-                    tokenizer.append_token_filter(TokenFilterLoader::load_from_value(
+                    self.append_token_filter(TokenFilterLoader::load_from_value(
                         token_filter_name,
                         &token_filter_setting["args"],
                     )?);
@@ -224,7 +217,7 @@ impl<T: Deref<Target = [u8]> + Clone> Tokenizer<T> {
             }
         }
 
-        Ok(tokenizer)
+        Ok(())
     }
 
     /// Appends a character filter to the tokenizer.
@@ -261,7 +254,7 @@ impl<T: Deref<Target = [u8]> + Clone> Tokenizer<T> {
     ///
     /// - This method adds a new token filter to the `Tokenizer`'s `token_filters` vector.
     /// - It returns a mutable reference to `self`, allowing multiple token filters to be appended in a chain of method calls.
-    pub fn append_token_filter(&mut self, token_filter: BoxTokenFilter) -> &mut Self {
+    pub fn append_token_filter(&mut self, token_filter: BoxTokenFilter<T>) -> &mut Self {
         self.token_filters.push(token_filter);
 
         self
@@ -299,7 +292,7 @@ impl<T: Deref<Target = [u8]> + Clone> Tokenizer<T> {
     /// - `Cow<'a, str>` is used for the `normalized_text`, allowing the function to either borrow the original text or create an owned version if the text needs modification.
     /// - If no character filters are applied, the original `text` is used as-is for segmentation.
     /// - Token offsets are adjusted after the tokenization process if character filters were applied to ensure the byte positions of each token are accurate relative to the original text.
-    pub fn tokenize<'a>(&'a self, text: &'a str) -> LinderaResult<Vec<Token<'a>>> {
+    pub fn tokenize<'a>(&'a self, text: &'a str) -> LinderaResult<Vec<Token<'a, T>>> {
         let mut normalized_text: Cow<'a, str> = Cow::Borrowed(text);
 
         let mut text_len_vec: Vec<usize> = Vec::new();
@@ -372,15 +365,42 @@ impl<T: Deref<Target = [u8]> + Clone> Clone for Tokenizer<T> {
             character_filters.push(character_filter.box_clone());
         }
 
-        let mut token_filters: Vec<BoxedTokenFilter<T>> = Vec::new();
+        let mut token_filters: Vec<BoxTokenFilter<T>> = Vec::new();
         for token_filter in self.token_filters.iter() {
-            token_filters.push(token_filter.clone());
+            token_filters.push(token_filter.box_clone());
         }
 
         Tokenizer {
             character_filters,
             segmenter: self.segmenter.clone(),
             token_filters,
+        }
+    }
+}
+
+// unfortunately, we can't impl tokenize on TokenizerE because of the return type is different
+pub enum TokenizerE {
+    Vec(Tokenizer<Vec<u8>>),
+    Static(Tokenizer<&'static [u8]>),
+}
+
+pub fn from_config(config: &TokenizerConfig) -> LinderaResult<TokenizerE> {
+    let segmenter_config = config.get("segmenter").ok_or_else(|| {
+        LinderaErrorKind::Deserialize.with_error(anyhow::anyhow!("missing segmenter config."))
+    })?;
+    let segmenter = segmenter::from_config(segmenter_config)?;
+
+    // Create a tokenizer from the segmenter.
+    match segmenter {
+        SegmenterE::Vec(s) => {
+            let mut tokenizer = Tokenizer::new(s);
+            tokenizer.attach_filters(config)?;
+            Ok(TokenizerE::Vec(tokenizer))
+        }
+        SegmenterE::Static(s) => {
+            let mut tokenizer = Tokenizer::new(s);
+            tokenizer.attach_filters(config)?;
+            Ok(TokenizerE::Static(tokenizer))
         }
     }
 }

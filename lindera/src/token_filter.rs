@@ -111,7 +111,7 @@ use crate::{LinderaErrorKind, LinderaResult};
 /// - `name`: Returns the name of the token filter as a static string slice.
 /// - `apply`: Applies the token filter to a mutable vector of tokens, returning
 ///   a `LinderaResult<()>`.
-pub trait TokenFilter<T: Deref<Target = [u8]>>: 'static + Send + Sync + Clone {
+pub trait TokenFilter<T: Deref<Target = [u8]>>: 'static + Send + Sync + TokenFilterClone<T> {
     fn name(&self) -> &'static str;
     fn apply(&self, tokens: &mut Vec<Token<'_, T>>) -> LinderaResult<()>;
 }
@@ -121,120 +121,152 @@ pub trait TokenFilter<T: Deref<Target = [u8]>>: 'static + Send + Sync + Clone {
 /// `TokenFilter` implementations at runtime. The `BoxTokenFilter` ensures that
 /// the contained `TokenFilter` is thread-safe (`Send` and `Sync`) and has a
 /// static lifetime.
-pub type BoxTokenFilter<T: Deref<Target = [u8]>> = Box<dyn TokenFilter<T>>;
+pub struct BoxTokenFilter<T: Deref<Target = [u8]>>(Box<dyn TokenFilter<T>>);
 
-pub fn load_from_value<T: Deref<Target = [u8]>>(kind: &str, value: &Value) -> LinderaResult<BoxTokenFilter<T>> {
-    // Creates a `BoxTokenFilter` based on the provided `kind` and `value`.
-    //
-    // The function matches the `kind` against various predefined token filter names
-    // and constructs the corresponding token filter using the configuration derived
-    // from `value`. If the `kind` does not match any of the predefined names, an error
-    // is returned.
-    //
-    // # Parameters
-    // - `kind`: A string slice that specifies the type of token filter to create.
-    // - `value`: A `serde_json::Value` that contains the configuration for the token filter.
-    //
-    // # Returns
-    // - `Result<BoxTokenFilter, LinderaError>`: A boxed token filter if the `kind` is recognized,
-    //   otherwise an error indicating that the token filter is unsupported.
-    //
-    // # Errors
-    // - Returns `LinderaErrorKind::Deserialize` if the `kind` is not supported or if there is an
-    //   error in creating the token filter from the provided `value`.
-    let token_filter = match kind {
-        JAPANESE_BASE_FORM_TOKEN_FILTER_NAME => {
-            BoxTokenFilter::from(JapaneseBaseFormTokenFilter::from_config(value)?)
-        }
-        JAPANESE_COMPOUND_WORD_TOKEN_FILTER_NAME => {
-            BoxTokenFilter::from(JapaneseCompoundWordTokenFilter::from_config(value)?)
-        }
-        JAPANESE_KANA_TOKEN_FILTER_NAME => {
-            BoxTokenFilter::from(JapaneseKanaTokenFilter::from_config(value)?)
-        }
-        JAPANESE_KATAKANA_STEM_TOKEN_FILTER_NAME => {
-            BoxTokenFilter::from(JapaneseKatakanaStemTokenFilter::from_config(value)?)
-        }
-        JAPANESE_KEEP_TAGS_TOKEN_FILTER_NAME => {
-            BoxTokenFilter::from(JapaneseKeepTagsTokenFilter::from_config(value)?)
-        }
-        JAPANESE_NUMBER_TOKEN_FILTER_NAME => {
-            BoxTokenFilter::from(JapaneseNumberTokenFilter::from_config(value)?)
-        }
-        JAPANESE_READING_FORM_TOKEN_FILTER_NAME => {
-            BoxTokenFilter::from(JapaneseReadingFormTokenFilter::from_config(value)?)
-        }
-        JAPANESE_STOP_TAGS_TOKEN_FILTER_NAME => {
-            BoxTokenFilter::from(JapaneseStopTagsTokenFilter::from_config(value)?)
-        }
-        KEEP_WORDS_TOKEN_FILTER_NAME => {
-            BoxTokenFilter::from(KeepWordsTokenFilter::from_config(value)?)
-        }
-        KOREAN_KEEP_TAGS_TOKEN_FILTER_NAME => {
-            BoxTokenFilter::from(KoreanKeepTagsTokenFilter::from_config(value)?)
-        }
-        KOREAN_READING_FORM_TOKEN_FILTER_NAME => {
-            BoxTokenFilter::from(KoreanReadingFormTokenFilter::from_config(value)?)
-        }
-        KOREAN_STOP_TAGS_TOKEN_FILTER_NAME => {
-            BoxTokenFilter::from(KoreanStopTagsTokenFilter::from_config(value)?)
-        }
-        LENGTH_TOKEN_FILTER_NAME => {
-            BoxTokenFilter::from(LengthTokenFilter::from_config(value)?)
-        }
-        LOWERCASE_TOKEN_FILTER_NAME => {
-            BoxTokenFilter::from(LowercaseTokenFilter::from_config(value)?)
-        }
-        MAPPING_TOKEN_FILTER_NAME => {
-            BoxTokenFilter::from(MappingTokenFilter::from_config(value)?)
-        }
-        REMOVE_DIACRITICAL_TOKEN_FILTER_NAME => {
-            BoxTokenFilter::from(RemoveDiacriticalMarkTokenFilter::from_config(value)?)
-        }
-        STOP_WORDS_TOKEN_FILTER_NAME => {
-            BoxTokenFilter::from(StopWordsTokenFilter::from_config(value)?)
-        }
-        UPPERCASE_TOKEN_FILTER_NAME => {
-            BoxTokenFilter::from(UppercaseTokenFilter::from_config(value)?)
-        }
-        _ => {
-            return Err(LinderaErrorKind::Deserialize
-                .with_error(anyhow::anyhow!("unsupported token filter: {}", kind)));
-        }
-    };
+impl<T: Deref<Target = [u8]>> Deref for BoxTokenFilter<T> {
+    type Target = dyn TokenFilter<T>;
 
-    Ok(token_filter)
+    fn deref(&self) -> &dyn TokenFilter<T> {
+        &*self.0
+    }
 }
 
-/// Loads a token filter based on a CLI flag string.
-///
-/// # Arguments
-///
-/// * `cli_flag` - A string slice representing the command-line interface (CLI) flag used to specify the token filter. The flag typically contains both the filter kind and its arguments.
-///
-/// # Returns
-///
-/// Returns a `LinderaResult<BoxTokenFilter>`, which is a boxed token filter, or an error if the CLI flag is invalid or the filter configuration cannot be loaded.
-///
-/// # Process
-///
-/// 1. **Parse CLI flag**:
-///    - The `parse_cli_flag` function is called to extract the filter kind and its arguments from the `cli_flag` string.
-/// 2. **Load filter from parsed values**:
-///    - The filter kind and arguments are passed to `load_from_value`, which constructs the appropriate token filter based on the parsed values.
-///
-/// # Errors
-///
-/// - If the CLI flag cannot be parsed, an error is returned.
-/// - If the filter kind or its configuration is invalid, an error is returned during the filter loading process.
-///
-/// # Details
-///
-/// - The CLI flag is parsed into a filter kind and arguments. These are then used to load the appropriate token filter using the `load_from_value` function.
-pub fn load_from_cli_flag<T: Deref<Target = [u8]>>(cli_flag: &str) -> LinderaResult<BoxTokenFilter<T>> {
-    let (kind, args) = parse_cli_flag(cli_flag)?;
+impl<T: Deref<Target = [u8]>> BoxTokenFilter<T> {
+    fn from(token_filter: impl TokenFilter<T>) -> BoxTokenFilter<T> {
+        BoxTokenFilter(Box::new(token_filter))
+    }
+}
 
-    let character_filter = load_from_value(kind, &args)?;
+/// A trait for cloning token filters.
+///
+/// This trait provides a method `box_clone` which allows for cloning
+/// a token filter and returning it as a boxed trait object.
+pub trait TokenFilterClone<T: Deref<Target = [u8]>> {
+    fn box_clone(&self) -> BoxTokenFilter<T>;
+}
 
-    Ok(character_filter)
+impl<T: Deref<Target = [u8]>, F: TokenFilter<T> + Clone> TokenFilterClone<T> for F {
+    fn box_clone(&self) -> BoxTokenFilter<T> {
+        BoxTokenFilter::from(self.clone())
+    }
+}
+
+pub struct TokenFilterLoader {}
+
+impl TokenFilterLoader {
+    pub fn load_from_value<T>(kind: &str, value: &Value) -> LinderaResult<BoxTokenFilter<T>> where T: Deref<Target = [u8]> {
+        // Creates a `BoxTokenFilter` based on the provided `kind` and `value`.
+        //
+        // The function matches the `kind` against various predefined token filter names
+        // and constructs the corresponding token filter using the configuration derived
+        // from `value`. If the `kind` does not match any of the predefined names, an error
+        // is returned.
+        //
+        // # Parameters
+        // - `kind`: A string slice that specifies the type of token filter to create.
+        // - `value`: A `serde_json::Value` that contains the configuration for the token filter.
+        //
+        // # Returns
+        // - `Result<BoxTokenFilter, LinderaError>`: A boxed token filter if the `kind` is recognized,
+        //   otherwise an error indicating that the token filter is unsupported.
+        //
+        // # Errors
+        // - Returns `LinderaErrorKind::Deserialize` if the `kind` is not supported or if there is an
+        //   error in creating the token filter from the provided `value`.
+        let token_filter = match kind {
+            JAPANESE_BASE_FORM_TOKEN_FILTER_NAME => {
+                BoxTokenFilter::from(JapaneseBaseFormTokenFilter::from_config(value)?)
+            }
+            JAPANESE_COMPOUND_WORD_TOKEN_FILTER_NAME => {
+                BoxTokenFilter::from(JapaneseCompoundWordTokenFilter::from_config(value)?)
+            }
+            JAPANESE_KANA_TOKEN_FILTER_NAME => {
+                BoxTokenFilter::from(JapaneseKanaTokenFilter::from_config(value)?)
+            }
+            JAPANESE_KATAKANA_STEM_TOKEN_FILTER_NAME => {
+                BoxTokenFilter::from(JapaneseKatakanaStemTokenFilter::from_config(value)?)
+            }
+            JAPANESE_KEEP_TAGS_TOKEN_FILTER_NAME => {
+                BoxTokenFilter::from(JapaneseKeepTagsTokenFilter::from_config(value)?)
+            }
+            JAPANESE_NUMBER_TOKEN_FILTER_NAME => {
+                BoxTokenFilter::from(JapaneseNumberTokenFilter::from_config(value)?)
+            }
+            JAPANESE_READING_FORM_TOKEN_FILTER_NAME => {
+                BoxTokenFilter::from(JapaneseReadingFormTokenFilter::from_config(value)?)
+            }
+            JAPANESE_STOP_TAGS_TOKEN_FILTER_NAME => {
+                BoxTokenFilter::from(JapaneseStopTagsTokenFilter::from_config(value)?)
+            }
+            KEEP_WORDS_TOKEN_FILTER_NAME => {
+                BoxTokenFilter::from(KeepWordsTokenFilter::from_config(value)?)
+            }
+            KOREAN_KEEP_TAGS_TOKEN_FILTER_NAME => {
+                BoxTokenFilter::from(KoreanKeepTagsTokenFilter::from_config(value)?)
+            }
+            KOREAN_READING_FORM_TOKEN_FILTER_NAME => {
+                BoxTokenFilter::from(KoreanReadingFormTokenFilter::from_config(value)?)
+            }
+            KOREAN_STOP_TAGS_TOKEN_FILTER_NAME => {
+                BoxTokenFilter::from(KoreanStopTagsTokenFilter::from_config(value)?)
+            }
+            LENGTH_TOKEN_FILTER_NAME => {
+                BoxTokenFilter::from(LengthTokenFilter::from_config(value)?)
+            }
+            LOWERCASE_TOKEN_FILTER_NAME => {
+                BoxTokenFilter::from(LowercaseTokenFilter::from_config(value)?)
+            }
+            MAPPING_TOKEN_FILTER_NAME => {
+                BoxTokenFilter::from(MappingTokenFilter::from_config(value)?)
+            }
+            REMOVE_DIACRITICAL_TOKEN_FILTER_NAME => {
+                BoxTokenFilter::from(RemoveDiacriticalMarkTokenFilter::from_config(value)?)
+            }
+            STOP_WORDS_TOKEN_FILTER_NAME => {
+                BoxTokenFilter::from(StopWordsTokenFilter::from_config(value)?)
+            }
+            UPPERCASE_TOKEN_FILTER_NAME => {
+                BoxTokenFilter::from(UppercaseTokenFilter::from_config(value)?)
+            }
+            _ => {
+                return Err(LinderaErrorKind::Deserialize
+                    .with_error(anyhow::anyhow!("unsupported token filter: {}", kind)));
+            }
+        };
+
+        Ok(token_filter)
+    }
+
+    /// Loads a token filter based on a CLI flag string.
+    ///
+    /// # Arguments
+    ///
+    /// * `cli_flag` - A string slice representing the command-line interface (CLI) flag used to specify the token filter. The flag typically contains both the filter kind and its arguments.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `LinderaResult<BoxTokenFilter>`, which is a boxed token filter, or an error if the CLI flag is invalid or the filter configuration cannot be loaded.
+    ///
+    /// # Process
+    ///
+    /// 1. **Parse CLI flag**:
+    ///    - The `parse_cli_flag` function is called to extract the filter kind and its arguments from the `cli_flag` string.
+    /// 2. **Load filter from parsed values**:
+    ///    - The filter kind and arguments are passed to `load_from_value`, which constructs the appropriate token filter based on the parsed values.
+    ///
+    /// # Errors
+    ///
+    /// - If the CLI flag cannot be parsed, an error is returned.
+    /// - If the filter kind or its configuration is invalid, an error is returned during the filter loading process.
+    ///
+    /// # Details
+    ///
+    /// - The CLI flag is parsed into a filter kind and arguments. These are then used to load the appropriate token filter using the `load_from_value` function.
+    pub fn load_from_cli_flag<T>(cli_flag: &str) -> LinderaResult<BoxTokenFilter<T>> where T: Deref<Target = [u8]> {
+        let (kind, args) = parse_cli_flag(cli_flag)?;
+
+        let character_filter = Self::load_from_value(kind, &args)?;
+
+        Ok(character_filter)
+    }
 }

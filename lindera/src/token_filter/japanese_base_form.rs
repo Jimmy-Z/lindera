@@ -1,6 +1,7 @@
 #[cfg(any(feature = "ipadic", feature = "ipadic-neologd", feature = "unidic",))]
 use std::borrow::Cow;
 use std::str::FromStr;
+use std::ops::Deref;
 
 use serde_json::Value;
 
@@ -43,7 +44,7 @@ impl JapaneseBaseFormTokenFilter {
     }
 }
 
-impl TokenFilter for JapaneseBaseFormTokenFilter {
+impl<T: Deref<Target = [u8]>> TokenFilter<T> for JapaneseBaseFormTokenFilter {
     fn name(&self) -> &'static str {
         JAPANESE_BASE_FORM_TOKEN_FILTER_NAME
     }
@@ -80,7 +81,7 @@ impl TokenFilter for JapaneseBaseFormTokenFilter {
     /// # Errors
     ///
     /// If any issue arises while processing tokens, the function will return an error in the form of `LinderaResult`.
-    fn apply(&self, tokens: &mut Vec<Token<'_>>) -> LinderaResult<()> {
+    fn apply(&self, tokens: &mut Vec<Token<'_, T>>) -> LinderaResult<()> {
         for token in tokens.iter_mut() {
             if let Some(detail) = token.get_detail(0) {
                 if detail == "UNK" {
